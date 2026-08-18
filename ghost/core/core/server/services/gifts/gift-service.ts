@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import errors from '@tryghost/errors';
 import logging from '@tryghost/logging';
 import type {Knex} from 'knex';
+import moment from 'moment-timezone';
 import {z} from 'zod';
 import {Gift} from './gift';
 import type {GiftEventBrowseOptions, GiftEventPage, GiftRepository} from './gift-bookshelf-repository';
@@ -9,7 +10,7 @@ import type {GiftDeliveryService} from './gift-delivery-service';
 import type {GiftReminderScheduler} from './gift-reminder-scheduler';
 import {GiftCadenceSchema, type GiftCadence} from './gift-schema';
 import tpl from '@tryghost/tpl';
-import {GIFT_REMINDER_FLOOR_DAYS, GIFT_REMINDER_LEAD_DAYS} from './constants';
+import {GIFT_EXPIRY_DAYS, GIFT_REMINDER_FLOOR_DAYS, GIFT_REMINDER_LEAD_DAYS} from './constants';
 import {
     resolveGiftDuration,
     validateGiftCheckoutOffer,
@@ -508,6 +509,13 @@ export class GiftService {
         return this.completeLegacyPurchase(input);
     }
 
+    private getClaimDeadline(purchasedAt: Date): Date {
+        const timezoneSetting = this.deps.settingsCache.get('timezone');
+        const timezone = typeof timezoneSetting === 'string' && timezoneSetting ? timezoneSetting : 'Etc/UTC';
+
+        return moment(purchasedAt).tz(timezone).add(GIFT_EXPIRY_DAYS, 'days').endOf('day').toDate();
+    }
+
     private async completePendingPurchase(input: GiftPaymentCompletionData): Promise<boolean> {
         const parsed = GiftPaymentCompletionSchema.safeParse(input);
         if (!parsed.success) {
@@ -519,6 +527,8 @@ export class GiftService {
             });
         }
         const data = parsed.data;
+        const purchasedAt = new Date();
+        const expiresAt = this.getClaimDeadline(purchasedAt);
         const member = data.stripeCustomerId
             ? await this.deps.memberRepository.get({customer_id: data.stripeCustomerId})
             : null;
@@ -554,7 +564,9 @@ export class GiftService {
                 buyerEmail,
                 buyerMemberId: member?.id ?? gift.buyerMemberId,
                 stripeCheckoutSessionId: data.stripeCheckoutSessionId,
-                stripePaymentIntentId: data.stripePaymentIntentId
+                stripePaymentIntentId: data.stripePaymentIntentId,
+                purchasedAt,
+                expiresAt
             });
             if (!purchased) {
                 return null;
@@ -593,6 +605,8 @@ export class GiftService {
             });
         }
         const data = parsed.data;
+        const purchasedAt = new Date();
+        const expiresAt = this.getClaimDeadline(purchasedAt);
 
         if (await this.deps.giftRepository.existsByCheckoutSessionId(data.stripeCheckoutSessionId)) {
             return false;
@@ -612,7 +626,9 @@ export class GiftService {
             currency: data.currency,
             amount: data.amount,
             stripeCheckoutSessionId: data.stripeCheckoutSessionId,
-            stripePaymentIntentId: data.stripePaymentIntentId
+            stripePaymentIntentId: data.stripePaymentIntentId,
+            purchasedAt,
+            expiresAt
         });
 
         await this.deps.giftRepository.create(gift);
@@ -683,7 +699,10 @@ export class GiftService {
         if (!redeemableCheck.redeemable) {
             switch (redeemableCheck.reason) {
             case 'payment-pending':
-                throw new errors.NotFoundError({message: tpl(errorMessages.giftNotFound)});
+                throw new errors.NotFoundError({
+                    message: tpl(errorMessages.giftNotFound),
+                    code: 'GIFT_NOT_FOUND'
+                });
             case 'redeemed':
                 throw new errors.BadRequestError({
                     message: tpl(errorMessages.giftAlreadyRedeemed),
@@ -726,7 +745,10 @@ export class GiftService {
         const gift = await this.deps.giftRepository.getByToken(input.token);
 
         if (!gift) {
-            throw new errors.NotFoundError({message: tpl(errorMessages.giftNotFound)});
+            throw new errors.NotFoundError({
+                message: tpl(errorMessages.giftNotFound),
+                code: 'GIFT_NOT_FOUND'
+            });
         }
 
         this.assertRedeemable(gift, input.memberStatus);
@@ -797,7 +819,10 @@ export class GiftService {
 
         const gift = await this.deps.giftRepository.getByToken(token, {transacting, forUpdate: true});
         if (!gift) {
-            throw new errors.NotFoundError({message: tpl(errorMessages.giftNotFound)});
+            throw new errors.NotFoundError({
+                message: tpl(errorMessages.giftNotFound),
+                code: 'GIFT_NOT_FOUND'
+            });
         }
 
         if (options.newMember) {

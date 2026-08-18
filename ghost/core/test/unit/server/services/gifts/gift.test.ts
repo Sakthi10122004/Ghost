@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import {Gift, type GiftFromPurchaseData} from '../../../../../core/server/services/gifts/gift';
-import {GIFT_EXPIRY_DAYS} from '../../../../../core/server/services/gifts/constants';
 import {buildGift} from './utils';
 
 describe('Gift', function () {
@@ -14,7 +13,9 @@ describe('Gift', function () {
         currency: 'usd',
         amount: 5000,
         stripeCheckoutSessionId: 'cs_123',
-        stripePaymentIntentId: 'pi_456'
+        stripePaymentIntentId: 'pi_456',
+        purchasedAt: new Date('2026-08-18T23:30:00.000Z'),
+        expiresAt: new Date('2027-08-19T06:59:59.999Z')
     };
 
     describe('fromPurchase', function () {
@@ -24,22 +25,11 @@ describe('Gift', function () {
             assert.equal(gift.status, 'purchased');
         });
 
-        it('sets purchasedAt to now', function () {
-            const before = new Date();
+        it('uses the authoritative purchase time and claim deadline', function () {
             const gift = Gift.fromPurchase(purchaseData);
-            const after = new Date();
 
-            assert.ok(gift.purchasedAt! >= before);
-            assert.ok(gift.purchasedAt! <= after);
-        });
-
-        it('sets expiresAt to GIFT_EXPIRY_DAYS after purchasedAt', function () {
-            const gift = Gift.fromPurchase(purchaseData);
-            const daysDiff = Math.round(
-                (gift.expiresAt!.getTime() - gift.purchasedAt!.getTime()) / (1000 * 60 * 60 * 24)
-            );
-
-            assert.equal(daysDiff, GIFT_EXPIRY_DAYS);
+            assert.equal(gift.purchasedAt?.toISOString(), purchaseData.purchasedAt.toISOString());
+            assert.equal(gift.expiresAt?.toISOString(), purchaseData.expiresAt.toISOString());
         });
 
         it('sets null defaults for redemption fields', function () {
@@ -97,7 +87,9 @@ describe('Gift', function () {
                 buyerEmail: 'buyer@example.com',
                 buyerMemberId: null,
                 stripeCheckoutSessionId: 'cs_123',
-                stripePaymentIntentId: 'pi_123'
+                stripePaymentIntentId: 'pi_123',
+                purchasedAt: new Date('2026-08-18T23:30:00.000Z'),
+                expiresAt: new Date('2027-08-19T06:59:59.999Z')
             });
             assert.equal(purchased?.status, 'purchased');
             assert.equal(purchased?.recipientName, 'Recipient');
@@ -167,6 +159,17 @@ describe('Gift', function () {
             const result = gift.checkRedeemable('free');
 
             assert.deepEqual(result, {redeemable: true});
+        });
+
+        it('allows redemption through the claim deadline and expires immediately afterward', function () {
+            const expiresAt = new Date('2027-08-19T06:59:59.999Z');
+            const gift = buildGift({expiresAt});
+
+            assert.deepEqual(gift.checkRedeemable(null, expiresAt), {redeemable: true});
+            assert.deepEqual(gift.checkRedeemable(null, new Date(expiresAt.getTime() + 1)), {
+                redeemable: false,
+                reason: 'expired'
+            });
         });
 
         for (const {name, overrides, memberStatus, reason} of testCases) {

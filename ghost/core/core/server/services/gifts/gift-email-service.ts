@@ -5,6 +5,7 @@ import errors from '@tryghost/errors';
 import {getMailgunMessageId} from '../lib/mailgun-message-id';
 
 const DEFAULT_DATE_LOCALE = 'en-gb';
+const DEFAULT_TIMEZONE = 'Etc/UTC';
 const DEFAULT_ACCENT_COLOR = '#15212A';
 
 interface TransactionalMailer {
@@ -139,11 +140,13 @@ export class GiftEmailService {
 
     private formatDate(date: Date): string {
         const locale = this.settingsCache.get('locale') || DEFAULT_DATE_LOCALE;
+        const timeZone = this.settingsCache.get('timezone') || DEFAULT_TIMEZONE;
 
         return new Intl.DateTimeFormat(locale, {
             day: 'numeric',
             month: 'short',
-            year: 'numeric'
+            year: 'numeric',
+            timeZone
         }).format(date);
     }
 
