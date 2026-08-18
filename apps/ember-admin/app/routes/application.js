@@ -27,6 +27,58 @@ function K() {
     return this;
 }
 
+const AUTOMATIONS_REPLAY_SAMPLE_RATE = 0.5;
+
+function isAutomationsUrl(url) {
+    const path = new URL(url).hash.replace(/^#/, '').split('?')[0].replace(/\/+$/, '');
+    return path === '/automations' || path.startsWith('/automations/');
+}
+
+function setupAutomationsSessionReplay(replay) {
+    let initialRouteCheck;
+    let removeNavigationListener;
+
+    const teardown = () => {
+        clearTimeout(initialRouteCheck);
+        removeNavigationListener();
+    };
+
+    const maybeStartRecording = (url) => {
+        if (!isAutomationsUrl(url)) {
+            return;
+        }
+
+        teardown();
+
+        replay.stop().then(() => replay.start()).catch((error) => {
+            try {
+                replay.startBuffering();
+            } catch (e) {
+                // Replay is still running, nothing to restore
+            }
+            console.error('Error starting Sentry Replay recording:', error); // eslint-disable-line no-console
+        });
+    };
+
+    // React-owned admin routes navigate via pushState, which doesn't fire
+    // `hashchange`, so prefer the Navigation API where available
+    if (window.navigation) {
+        const onNavigate = event => maybeStartRecording(event.destination.url);
+        window.navigation.addEventListener('navigate', onNavigate);
+        removeNavigationListener = () => window.navigation.removeEventListener('navigate', onNavigate);
+    } else {
+        const onHashChange = () => maybeStartRecording(window.location.href);
+        window.addEventListener('hashchange', onHashChange);
+        removeNavigationListener = () => window.removeEventListener('hashchange', onHashChange);
+    }
+
+    // Replay defers its sampling initialization during Sentry.init(). Queue the
+    // initial route check behind it to avoid starting a second rrweb recorder.
+    initialRouteCheck = setTimeout(() => maybeStartRecording(window.location.href));
+
+    return teardown;
+}
+
 let shortcuts = {};
 
 shortcuts.esc = {action: 'closeMenus', scope: 'default'};
@@ -192,6 +244,7 @@ export default Route.extend(ShortcutsRoute, {
     },
 
     willDestroy() {
+        this._cleanupAutomationsSessionReplay?.();
         this.ui.cleanupBodyDragHandlers();
     },
 
@@ -203,6 +256,16 @@ export default Route.extend(ShortcutsRoute, {
         if (this.config.sentry_dsn) {
             const sentryConfig = getSentryConfig(this.config.sentry_dsn, this.config.sentry_env, this.config.version);
             Sentry.init(sentryConfig);
+
+            // Keep error-triggered replay buffering everywhere, but once a
+            // sampled app load enters Automations, record a full session
+            // replay for the rest of that load.
+            if (Math.random() < AUTOMATIONS_REPLAY_SAMPLE_RATE) {
+                const replay = Sentry.getClient()?.getIntegrationByName('Replay');
+                if (replay) {
+                    this._cleanupAutomationsSessionReplay = setupAutomationsSessionReplay(replay);
+                }
+            }
         }
 
         if (this.session.isAuthenticated) {
