@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {getMemberFields} from './member-fields';
+import {getMemberFields, memberFields} from './member-fields';
 import {hasTimezoneSensitiveMemberFilter, isPredicateEnabled, parseMemberFilter, serializeMemberFilters} from './member-filter-query';
 import type {FilterPredicate} from '@/shared/filters';
 
@@ -13,25 +13,48 @@ function stripIds(predicates: FilterPredicate[]) {
 
 describe('member-filter-query', () => {
     it('parses subscribed lifecycle compounds and legacy email-disabled filters', () => {
-        expect(stripIds(parseMemberFilter('(subscribed:true+email_disabled:0)', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('(subscribed:true+email_disabled:0)', 'UTC', memberFields))).toEqual([
             {field: 'subscribed', operator: 'is', values: ['subscribed']}
         ]);
 
-        expect(stripIds(parseMemberFilter('(subscribed:false,email_disabled:1)', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('(subscribed:false,email_disabled:1)', 'UTC', memberFields))).toEqual([
             {field: 'subscribed', operator: 'is-not', values: ['subscribed']}
         ]);
 
-        expect(stripIds(parseMemberFilter('(email_disabled:0)', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('(email_disabled:0)', 'UTC', memberFields))).toEqual([
             {field: 'subscribed', operator: 'is-not', values: ['email-disabled']}
         ]);
     });
 
+    it('leaves comparative clauses unread rather than reading them as their opposite', () => {
+        const comparative = [
+            'subscribed:-true',
+            'email_disabled:>0',
+            'email_disabled:-1',
+            '(feedback.post_id:\'post_123\'+feedback.score:-1)',
+            '(feedback.post_id:-\'post_123\'+feedback.score:1)',
+            'newsletters.slug:>weekly'
+        ];
+
+        for (const filter of comparative) {
+            expect(stripIds(parseMemberFilter(filter, 'UTC', memberFields))).toEqual([]);
+        }
+    });
+
+    it('does not claim a pair whose partner clause is comparative', () => {
+        for (const filter of ['(subscribed:-true+email_disabled:0)', '(newsletters.slug:>weekly+email_disabled:0)']) {
+            expect(stripIds(parseMemberFilter(filter, 'UTC', memberFields))).toEqual([
+                {field: 'subscribed', operator: 'is-not', values: ['email-disabled']}
+            ]);
+        }
+    });
+
     it('parses newsletter and feedback compounds', () => {
-        expect(stripIds(parseMemberFilter('(newsletters.slug:weekly+email_disabled:0)', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('(newsletters.slug:weekly+email_disabled:0)', 'UTC', memberFields))).toEqual([
             {field: 'newsletters.weekly', operator: 'is', values: ['subscribed']}
         ]);
 
-        expect(stripIds(parseMemberFilter('(feedback.post_id:\'post_123\'+feedback.score:1)', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('(feedback.post_id:\'post_123\'+feedback.score:1)', 'UTC', memberFields))).toEqual([
             {field: 'newsletter_feedback', operator: '1', values: ['post_123']}
         ]);
     });
@@ -59,41 +82,55 @@ describe('member-filter-query', () => {
     });
 
     it('parses legacy scalar set filters and preserves singleton offer ids', () => {
-        const parsed = parseMemberFilter('offer_redemptions:\'offer_123\'', 'UTC');
+        const parsed = parseMemberFilter('offer_redemptions:\'offer_123\'', 'UTC', memberFields);
 
         expect(stripIds(parsed)).toEqual([
             {field: 'offer_redemptions', operator: 'is-any', values: ['offer_123']}
         ]);
 
-        expect(serializeMemberFilters(parsed, 'UTC')).toBe('offer_redemptions:\'offer_123\'');
+        expect(serializeMemberFilters(parsed, 'UTC', memberFields)).toBe('offer_redemptions:\'offer_123\'');
     });
 
     it('parses legacy scalar label filters into set predicates', () => {
-        expect(stripIds(parseMemberFilter('label:vip', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('label:vip', 'UTC', memberFields))).toEqual([
             {field: 'label', operator: 'is-any', values: ['vip']}
         ]);
     });
 
     it('best-effort parses compat subscribed booleans into subscribed filters', () => {
-        expect(stripIds(parseMemberFilter('subscribed:true', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('subscribed:true', 'UTC', memberFields))).toEqual([
             {field: 'subscribed', operator: 'is', values: ['subscribed']}
         ]);
 
-        expect(stripIds(parseMemberFilter('subscribed:false', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('subscribed:false', 'UTC', memberFields))).toEqual([
             {field: 'subscribed', operator: 'is', values: ['unsubscribed']}
         ]);
     });
 
+    it('keeps the other clauses when an unwrapped compound carries more than the pair', () => {
+        expect(stripIds(parseMemberFilter("subscribed:true+email_disabled:0+name:~'x'", 'UTC', memberFields)).map(p => p.field))
+            .toEqual(['subscribed', 'subscribed', 'name']);
+
+        expect(stripIds(parseMemberFilter("subscribed:true+email_disabled:0+name:~'x'+status:paid", 'UTC', memberFields)).map(p => p.field))
+            .toEqual(['subscribed', 'subscribed', 'name', 'status']);
+
+    });
+
+    it('drops an ungrouped feedback pair, because neither of its clauses reads alone', () => {
+        expect(stripIds(parseMemberFilter("feedback.post_id:'p1'+feedback.score:1+name:~'x'", 'UTC', memberFields)).map(p => p.field))
+            .toEqual(['name']);
+    });
+
     it('parses unwrapped Ember compounds at the root', () => {
-        expect(stripIds(parseMemberFilter('subscribed:true+email_disabled:0', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('subscribed:true+email_disabled:0', 'UTC', memberFields))).toEqual([
             {field: 'subscribed', operator: 'is', values: ['subscribed']}
         ]);
 
-        expect(stripIds(parseMemberFilter('newsletters.slug:weekly+email_disabled:0', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('newsletters.slug:weekly+email_disabled:0', 'UTC', memberFields))).toEqual([
             {field: 'newsletters.weekly', operator: 'is', values: ['subscribed']}
         ]);
 
-        expect(stripIds(parseMemberFilter('feedback.post_id:\'post_123\'+feedback.score:1', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('feedback.post_id:\'post_123\'+feedback.score:1', 'UTC', memberFields))).toEqual([
             {field: 'newsletter_feedback', operator: '1', values: ['post_123']}
         ]);
     });
@@ -105,29 +142,29 @@ describe('member-filter-query', () => {
             {id: '3', field: 'newsletters.weekly', operator: 'is', values: ['subscribed']}
         ];
 
-        expect(serializeMemberFilters(predicates, 'UTC')).toBe(
+        expect(serializeMemberFilters(predicates, 'UTC', memberFields)).toBe(
             '(newsletters.slug:weekly+email_disabled:0)+emails.post_id:\'post_123\'+status:paid'
         );
     });
 
     it('canonicalizes compat subscribed booleans to member filter compounds', () => {
-        const parsed = parseMemberFilter('subscribed:true', 'UTC');
+        const parsed = parseMemberFilter('subscribed:true', 'UTC', memberFields);
 
-        expect(serializeMemberFilters(parsed, 'UTC')).toBe('(subscribed:true+email_disabled:0)');
+        expect(serializeMemberFilters(parsed, 'UTC', memberFields)).toBe('(subscribed:true+email_disabled:0)');
     });
 
     it('parses and serializes member date boundaries', () => {
-        const parsed = parseMemberFilter('created_at:<=\'2024-01-01T23:59:59.999Z\'', 'UTC');
+        const parsed = parseMemberFilter('created_at:<=\'2024-01-01T23:59:59.999Z\'', 'UTC', memberFields);
 
         expect(stripIds(parsed)).toEqual([
             {field: 'created_at', operator: 'is-or-less', values: ['2024-01-01']}
         ]);
 
-        expect(serializeMemberFilters(parsed, 'UTC')).toBe('created_at:<=\'2024-01-01T23:59:59.999Z\'');
+        expect(serializeMemberFilters(parsed, 'UTC', memberFields)).toBe('created_at:<=\'2024-01-01T23:59:59.999Z\'');
     });
 
     it('parses legacy Ember member date URLs without ISO timezone markers', () => {
-        const parsed = parseMemberFilter('subscriptions.start_date:<=\'2022-02-01 23:59:59\'', 'UTC');
+        const parsed = parseMemberFilter('subscriptions.start_date:<=\'2022-02-01 23:59:59\'', 'UTC', memberFields);
 
         expect(stripIds(parsed)).toEqual([
             {field: 'subscriptions.start_date', operator: 'is-or-less', values: ['2022-02-01']}
@@ -135,7 +172,7 @@ describe('member-filter-query', () => {
     });
 
     it('parses legacy Ember UTC date URLs relative to the site timezone', () => {
-        const parsed = parseMemberFilter('subscriptions.start_date:<=\'2022-02-01 23:59:59\'', 'Europe/Stockholm');
+        const parsed = parseMemberFilter('subscriptions.start_date:<=\'2022-02-01 23:59:59\'', 'Europe/Stockholm', memberFields);
 
         expect(stripIds(parsed)).toEqual([
             {field: 'subscriptions.start_date', operator: 'is-or-less', values: ['2022-02-02']}
@@ -143,13 +180,13 @@ describe('member-filter-query', () => {
     });
 
     it('round-trips member date boundaries in site timezones', () => {
-        const parsed = parseMemberFilter('created_at:<=\'2024-02-01T22:59:59.999Z\'', 'Europe/Stockholm');
+        const parsed = parseMemberFilter('created_at:<=\'2024-02-01T22:59:59.999Z\'', 'Europe/Stockholm', memberFields);
 
         expect(stripIds(parsed)).toEqual([
             {field: 'created_at', operator: 'is-or-less', values: ['2024-02-01']}
         ]);
 
-        expect(serializeMemberFilters(parsed, 'Europe/Stockholm')).toBe('created_at:<=\'2024-02-01T22:59:59.999Z\'');
+        expect(serializeMemberFilters(parsed, 'Europe/Stockholm', memberFields)).toBe('created_at:<=\'2024-02-01T22:59:59.999Z\'');
     });
 
     it('sorts clauses canonically on serialize', () => {
@@ -158,20 +195,20 @@ describe('member-filter-query', () => {
             {id: '1', field: 'label', operator: 'is-any', values: ['vip', 'alpha']}
         ];
 
-        expect(serializeMemberFilters(predicates, 'UTC')).toBe('label:[alpha,vip]+status:paid');
+        expect(serializeMemberFilters(predicates, 'UTC', memberFields)).toBe('label:[alpha,vip]+status:paid');
     });
 
     it('round-trips canonical member examples', () => {
         const filter = '(feedback.post_id:\'post_123\'+feedback.score:1)+status:paid+subscriptions.current_period_end:<=\'2024-01-01T23:59:59.999Z\'';
-        const parsed = parseMemberFilter(filter, 'UTC');
+        const parsed = parseMemberFilter(filter, 'UTC', memberFields);
 
-        expect(serializeMemberFilters(parsed, 'UTC')).toBe(
+        expect(serializeMemberFilters(parsed, 'UTC', memberFields)).toBe(
             '(feedback.post_id:\'post_123\'+feedback.score:1)+status:paid+subscriptions.current_period_end:<=\'2024-01-01T23:59:59.999Z\''
         );
     });
 
     it('prefers grouped compound parsing over simple node fallback', () => {
-        const parsed = parseMemberFilter('(subscribed:false,email_disabled:1)', 'UTC');
+        const parsed = parseMemberFilter('(subscribed:false,email_disabled:1)', 'UTC', memberFields);
 
         expect(stripIds(parsed)).toEqual([
             {field: 'subscribed', operator: 'is-not', values: ['subscribed']}
@@ -182,7 +219,7 @@ describe('member-filter-query', () => {
         const parsed = parseMemberFilter(
             '(subscribed:true+email_disabled:0)+(newsletters.slug:weekly+email_disabled:0)+(feedback.post_id:\'post_123\'+feedback.score:1)+status:paid',
             'UTC'
-        );
+        , memberFields);
 
         expect(stripIds(parsed)).toEqual([
             {field: 'subscribed', operator: 'is', values: ['subscribed']},
@@ -193,42 +230,42 @@ describe('member-filter-query', () => {
     });
 
     it('drops unsupported OR compounds during parse', () => {
-        expect(parseMemberFilter('status:paid,label:vip', 'UTC')).toEqual([]);
+        expect(parseMemberFilter('status:paid,label:vip', 'UTC', memberFields)).toEqual([]);
     });
 
     it('keeps supported siblings when unsupported OR compounds are present', () => {
         expect(stripIds(parseMemberFilter(
             '(status:paid,label:vip)+created_at:<=\'2024-02-01T23:59:59.999Z\'',
             'UTC'
-        ))).toEqual([
+        , memberFields))).toEqual([
             {field: 'created_at', operator: 'is-or-less', values: ['2024-02-01']}
         ]);
     });
 
     it('ignores malformed NQL input', () => {
-        expect(parseMemberFilter('status:(', 'UTC')).toEqual([]);
+        expect(parseMemberFilter('status:(', 'UTC', memberFields)).toEqual([]);
     });
 
     it('drops invalid member date values during parse', () => {
-        expect(parseMemberFilter('created_at:<=\'not-a-date\'', 'UTC')).toEqual([]);
+        expect(parseMemberFilter('created_at:<=\'not-a-date\'', 'UTC', memberFields)).toEqual([]);
     });
 
     it('parses relative past-date filters into in-the-last predicates for every supported field', () => {
-        expect(stripIds(parseMemberFilter('created_at:>=now-7d', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('created_at:>=now-7d', 'UTC', memberFields))).toEqual([
             {field: 'created_at', operator: 'in-the-last', values: [7]}
         ]);
 
-        expect(stripIds(parseMemberFilter('last_seen_at:>=now-30d', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('last_seen_at:>=now-30d', 'UTC', memberFields))).toEqual([
             {field: 'last_seen_at', operator: 'in-the-last', values: [30]}
         ]);
 
-        expect(stripIds(parseMemberFilter('subscriptions.start_date:>=now-90d', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('subscriptions.start_date:>=now-90d', 'UTC', memberFields))).toEqual([
             {field: 'subscriptions.start_date', operator: 'in-the-last', values: [90]}
         ]);
     });
 
     it('parses relative future-date filters into in-the-next predicates', () => {
-        expect(stripIds(parseMemberFilter('subscriptions.current_period_end:<=now+14d', 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter('subscriptions.current_period_end:<=now+14d', 'UTC', memberFields))).toEqual([
             {field: 'subscriptions.current_period_end', operator: 'in-the-next', values: [14]}
         ]);
     });
@@ -237,43 +274,43 @@ describe('member-filter-query', () => {
         expect(serializeMemberFilters(
             [{id: '1', field: 'created_at', operator: 'in-the-last', values: [7]}],
             'UTC'
-        )).toBe('created_at:>=now-7d');
+        , memberFields)).toBe('created_at:>=now-7d');
 
         expect(serializeMemberFilters(
             [{id: '1', field: 'subscriptions.current_period_end', operator: 'in-the-next', values: [14]}],
             'UTC'
-        )).toBe('subscriptions.current_period_end:<=now+14d');
+        , memberFields)).toBe('subscriptions.current_period_end:<=now+14d');
     });
 
     it('round-trips relative created_at predicates alongside other clauses', () => {
         const filter = 'created_at:>=now-30d+status:paid';
-        const parsed = parseMemberFilter(filter, 'UTC');
+        const parsed = parseMemberFilter(filter, 'UTC', memberFields);
 
         expect(stripIds(parsed)).toEqual([
             {field: 'created_at', operator: 'in-the-last', values: [30]},
             {field: 'status', operator: 'is', values: ['paid']}
         ]);
 
-        expect(serializeMemberFilters(parsed, 'UTC')).toBe('created_at:>=now-30d+status:paid');
+        expect(serializeMemberFilters(parsed, 'UTC', memberFields)).toBe('created_at:>=now-30d+status:paid');
     });
 
     it('drops invalid relative date predicates on serialize', () => {
         expect(serializeMemberFilters(
             [{id: '1', field: 'created_at', operator: 'in-the-last', values: [0]}],
             'UTC'
-        )).toBeUndefined();
+        , memberFields)).toBeUndefined();
 
         expect(serializeMemberFilters(
             [{id: '1', field: 'created_at', operator: 'in-the-last', values: ['7']}],
             'UTC'
-        )).toBeUndefined();
+        , memberFields)).toBeUndefined();
     });
 
     it('drops the entire filter when a relative-date clause is mixed into a top-level OR', () => {
         // Top-level OR isn't flattened by parseMemberNode, so every clause —
         // including the non-relative `status:paid` — is dropped. Pinned to
         // catch silent regressions if OR support is added later.
-        const parsed = parseMemberFilter('created_at:>=now-7d,status:paid', 'UTC');
+        const parsed = parseMemberFilter('created_at:>=now-7d,status:paid', 'UTC', memberFields);
 
         expect(stripIds(parsed)).toEqual([]);
     });
@@ -281,11 +318,11 @@ describe('member-filter-query', () => {
     it('drops the degenerate now-0d form', () => {
         // The codec only accepts a relative-day count > 0 — both directions
         // (parse and serialize) defend the same predicate-shape invariant.
-        expect(parseMemberFilter('created_at:>=now-0d', 'UTC')).toEqual([]);
+        expect(parseMemberFilter('created_at:>=now-0d', 'UTC', memberFields)).toEqual([]);
     });
 
     it('rejects relative day counts outside the safe-integer range on parse', () => {
-        expect(parseMemberFilter('created_at:>=now-9999999999999999d', 'UTC')).toEqual([]);
+        expect(parseMemberFilter('created_at:>=now-9999999999999999d', 'UTC', memberFields)).toEqual([]);
     });
 
     it('reports relative-date filters as timezone-sensitive', () => {
@@ -338,7 +375,7 @@ describe('member-filter-query - custom fields', () => {
     // Serialize each operator to NQL, then parse it back, and confirm the predicate
     // survives the round trip a saved segment relies on. Each field is its own
     // predicate keyed `custom_fields.<key>`; `values` is [subfield, value].
-    const cases: Array<{field: string; operator: string; values: [string, string]; nql: string}> = [
+    const cases: Array<{field: string; operator: string; values: string[]; nql: string}> = [
         {field: 'custom_fields.company', operator: 'is', values: ['', 'Ghost'], nql: "(custom_fields.key:'company'+custom_fields.value:'Ghost')"},
         {field: 'custom_fields.company', operator: 'is-not', values: ['', 'Ghost'], nql: "(custom_fields.key:'company'+custom_fields.value:-'Ghost')"},
         {field: 'custom_fields.company', operator: 'contains', values: ['', 'host'], nql: "(custom_fields.key:'company'+custom_fields.value:~'host')"},
@@ -358,20 +395,20 @@ describe('member-filter-query - custom fields', () => {
     ];
 
     it.each(cases)('serializes $field $operator to the expected NQL', ({field, operator, values, nql}) => {
-        const serialized = serializeMemberFilters([{id: 'x', field, operator, values}], 'UTC');
+        const serialized = serializeMemberFilters([{id: 'x', field, operator, values}], 'UTC', memberFields);
         expect(serialized).toBe(nql);
     });
 
     it.each(cases)('parses $field $operator back into the same predicate', ({field, operator, values, nql}) => {
-        expect(stripIds(parseMemberFilter(nql, 'UTC'))).toEqual([
+        expect(stripIds(parseMemberFilter(nql, 'UTC', memberFields))).toEqual([
             {field, operator, values}
         ]);
     });
 
     it.each(cases)('round-trips $field $operator (predicate -> nql -> predicate)', ({field, operator, values}) => {
         const predicate: FilterPredicate = {id: 'x', field, operator, values};
-        const nql = serializeMemberFilters([predicate], 'UTC');
-        expect(stripIds(parseMemberFilter(nql, 'UTC'))).toEqual([
+        const nql = serializeMemberFilters([predicate], 'UTC', memberFields);
+        expect(stripIds(parseMemberFilter(nql, 'UTC', memberFields))).toEqual([
             {field, operator, values}
         ]);
     });

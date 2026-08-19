@@ -26,7 +26,6 @@ describe('memberFields', () => {
             'last_seen_at',
             'created_at',
             'signup',
-            'newsletters.:slug',
             'tier_id',
             'status',
             'subscriptions.plan_interval',
@@ -43,6 +42,7 @@ describe('memberFields', () => {
             'newsletter_feedback',
             'offer_redemptions',
             'count.active_stripe_customers',
+            'newsletters.:slug',
             'custom_fields.:key'
         ]);
     });
@@ -195,7 +195,7 @@ describe('multipleActiveSubscriptionsCodec', () => {
 });
 
 describe('newsletterCodec', () => {
-    it('serializes newsletter subscription state from a pattern field', () => {
+    it('serializes newsletter subscription state from the field it belongs to', () => {
         const predicate: FilterPredicate = {
             id: '1',
             field: 'newsletters.weekly',
