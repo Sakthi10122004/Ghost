@@ -309,7 +309,8 @@ export class StripeTestService {
             customerEmail: email,
             donationMessage: opts.donationMessage ?? null,
             metadata: session.response.metadata,
-            name
+            name,
+            sessionId: opts.sessionId
         });
         const donationResponse = await this.webhookClient.sendWebhook(donationEvent);
         debug('checkout.session.completed donation webhook response: %d', donationResponse.status);
