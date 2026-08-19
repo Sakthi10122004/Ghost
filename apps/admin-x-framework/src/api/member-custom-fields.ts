@@ -1,8 +1,7 @@
-import {FIELD_TYPE_IDS, subFieldsOf, type FieldType, type PartsOf} from '@tryghost/custom-field-types';
+import {FIELD_TYPES, FIELD_TYPE_IDS, subFieldsOf, type FieldKind, type FieldType, type PartsOf} from '@tryghost/custom-field-types';
 import {csvColumnsForField} from '@tryghost/custom-field-types/csv';
 import {Meta, createMutation, createQuery, createQueryWithId} from '../utils/api/hooks';
 
-// Re-exported so the import mapping can recognise a custom_fields.* column (same reason
 // as the re-exports below).
 export {isCustomFieldColumn} from '@tryghost/custom-field-types/csv';
 
@@ -11,6 +10,8 @@ export {isCustomFieldColumn} from '@tryghost/custom-field-types/csv';
 // catalog package — the framework is their surface for everything custom-fields.
 export type {Address as MemberCustomFieldAddress} from '@tryghost/custom-field-types';
 export {FIELD_TYPES as MEMBER_CUSTOM_FIELD_TYPES} from '@tryghost/custom-field-types';
+export {FIELD_KINDS as MEMBER_CUSTOM_FIELD_KINDS} from '@tryghost/custom-field-types';
+export type {FieldKind as MemberCustomFieldKind} from '@tryghost/custom-field-types';
 
 export type MemberCustomField = {
     // Fields are addressed by their immutable key; the DB id is never exposed.
@@ -122,7 +123,7 @@ export type MemberCustomFieldCsvColumn = {
 
 /**
  * The CSV import mapping targets for a set of custom fields: one per column the export
- * writes, labelled for the field (and sub-field, for a composite). Column names come from
+ * writes, labeled for the field (and sub-field, for a composite). Column names come from
  * the shared codec the exporter writes and the importer reads, so a target is exactly a
  * round-tripping column rather than one hand-kept in sync.
  */
@@ -214,6 +215,8 @@ export const formatMemberCustomFieldValue = (type: FieldType, value: unknown): s
 
     return typeof value === 'string' ? value : '';
 };
+
+export const memberCustomFieldKind = (type: FieldType): FieldKind => FIELD_TYPES[type].kind;
 
 export interface MemberCustomFieldsResponseType {
     meta?: Meta;
