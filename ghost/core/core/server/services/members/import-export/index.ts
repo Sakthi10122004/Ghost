@@ -35,7 +35,7 @@ interface ImporterServices {
         definitions: {browse(): Promise<CsvField[]>};
         values: {
             planWrite(values: Record<string, unknown>): Promise<unknown[]>;
-            applyWrite(memberId: string, plan: unknown[], options?: {executor?: Knex}): Promise<void>;
+            applyWrite(memberId: string, plan: unknown[], options: {source: 'import', executor?: Knex}): Promise<void>;
         };
     };
 }
@@ -98,7 +98,8 @@ export function makeImporter(deps: ImporterServices) {
     const customFields: CustomFieldsImport = {
         activeFields: async () => (labs.isSet('membersCustomFields') ? deps.customFields.definitions.browse() : []),
         planWrite: values => deps.customFields.values.planWrite(values),
-        applyWrite: (memberId, plan, executor) => deps.customFields.values.applyWrite(memberId, plan, {executor})
+        // Every value the import writes came out of the file, whichever column carried it.
+        applyWrite: (memberId, plan, executor) => deps.customFields.values.applyWrite(memberId, plan, {source: 'import', executor})
     };
 
     // Inline jobs never reach the job manager's Sentry handler, which is wired to the

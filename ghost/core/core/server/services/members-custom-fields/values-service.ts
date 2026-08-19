@@ -4,7 +4,7 @@ import logging from '@tryghost/logging';
 import type {Knex} from 'knex';
 import {z} from 'zod';
 import {FIELD_TYPES, subFieldsOf, type FieldType} from '@tryghost/custom-field-types';
-import {DbCustomFieldLeaf, DbCustomFieldValue, FIELD_STATUS} from './schema';
+import {DbCustomFieldLeaf, DbCustomFieldValue, FIELD_STATUS, type ValueSource} from './schema';
 import {activeFields} from './queries';
 import {leavesToWrite, valuesFromLeaves, type StoredLeaf} from './storage';
 
@@ -194,13 +194,16 @@ export class CustomFieldValuesService {
      * them, and saying nothing about a path leaves it alone. There is no whole-value
      * replace, so a caller that does not know about a field cannot erase it.
      *
+     * `source` is required and has no default: every writer has to say which it is, so a
+     * new one cannot quietly inherit the identity of whichever was written first.
+     *
      * Always transactional. Given an executor it joins that transaction, so the importer's
      * failed value write takes its member with it; given none it opens its own.
      */
     async applyWrite(
         memberId: string,
         writes: PlannedWrite[],
-        {executor = this.knex}: {executor?: Knex} = {}
+        {source, executor = this.knex}: {source: ValueSource, executor?: Knex}
     ): Promise<void> {
         if (writes.length === 0) {
             return;
@@ -232,6 +235,7 @@ export class CustomFieldValuesService {
                     custom_field_key: field.key,
                     path: leaf.path,
                     value_text: leaf.value_text,
+                    source,
                     created_at: now,
                     updated_at: now
                 })));
@@ -259,7 +263,9 @@ export class CustomFieldValuesService {
                     // Naming the columns rather than giving values takes each from the row
                     // that lost the conflict, so every part updates to its own value.
                     .onConflict(['member_id', 'custom_field_key', 'path'])
-                    .merge(['value_text', 'updated_at']);
+                    // `source` is merged with the value, so a leaf names where what it
+                    // currently holds came from rather than where its first value did.
+                    .merge(['value_text', 'source', 'updated_at']);
             }
         };
 

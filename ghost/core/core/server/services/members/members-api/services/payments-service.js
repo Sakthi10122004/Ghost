@@ -14,6 +14,8 @@ class PaymentsService {
      * @param {import('../../../offers/application/offers-api')} deps.offersAPI
      * @param {import('../../../stripe/stripe-api')} deps.stripeAPIService
      * @param {{get(key: string): any}} deps.settingsCache
+     * @param {{checkout: import('../../../tier-checkout-config').TierCheckoutConfigService}} deps.tiersService
+     * @param {{isSet(flag: string): boolean}} deps.labsService
      */
     constructor(deps) {
         /** @private */
@@ -30,6 +32,10 @@ class PaymentsService {
         this.stripeAPIService = deps.stripeAPIService;
         /** @private */
         this.settingsCache = deps.settingsCache;
+        /** @private */
+        this.tiersService = deps.tiersService;
+        /** @private */
+        this.labsService = deps.labsService;
         DomainEvents.subscribe(OfferCreatedEvent, async (event) => {
             await this.getCouponForOffer(event.data.offer.id);
         });
@@ -108,7 +114,11 @@ class PaymentsService {
             successUrl: successUrl,
             cancelUrl: cancelUrl,
             trialDays: trialDays ?? tier.trialDays,
-            coupon: coupon?.id
+            coupon: coupon?.id,
+            // Resolved here rather than cached with the tier, so a field archived a minute
+            // ago stops being asked on the next checkout. A failure to resolve must not
+            // stop a member paying, so it costs the questions and nothing else.
+            checkout: await this.getCheckoutConfigForTier(tier)
         };
 
         // If we already have a coupon, we don't want to give trial days over it
@@ -123,6 +133,31 @@ class PaymentsService {
         const session = await this.stripeAPIService.createCheckoutSession(price.id, customer, data);
 
         return session.url;
+    }
+
+    /**
+     * What this tier's checkout should ask for beyond the payment, or nothing.
+     *
+     * Undefined on every path but the configured one, including the flag being off: the
+     * session builder adds no parameters for it, so an unconfigured site's request to
+     * Stripe is exactly the request it made before this existed.
+     *
+     * @private
+     * @param {import('../../../tiers/tier')} tier
+     */
+    async getCheckoutConfigForTier(tier) {
+        const checkoutConfig = this.tiersService?.checkout;
+        if (!this.labsService?.isSet('membersCustomFields') || !checkoutConfig) {
+            return undefined;
+        }
+        try {
+            return await checkoutConfig.resolve(tier.id.toHexString());
+        } catch (err) {
+            // A checkout that asks one fewer question still takes the money; one that fails
+            // to be created takes none. This is the whole reason it is caught.
+            logging.error(err);
+            return undefined;
+        }
     }
 
     /**

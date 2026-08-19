@@ -76,8 +76,13 @@ module.exports = {
         return require('./member-custom-fields');
     },
 
+
     get tiers() {
         return require('./tiers');
+    },
+
+    get tiers_checkout_config() {
+        return require('./tiers-checkout-config');
     },
 
     get images() {

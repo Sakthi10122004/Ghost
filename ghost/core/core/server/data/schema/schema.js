@@ -685,6 +685,127 @@ module.exports = {
         created_at: {type: 'dateTime', nullable: false},
         updated_at: {type: 'dateTime', nullable: true}
     },
+    // Where a source's own data lands. A source declares the ports it can supply — Stripe's
+    // shipping address, its tax number — and a publisher binds one to a field of theirs.
+    //
+    // Only for data a source collects under its own vocabulary. Stripe checkout questions
+    // need no row here, because Ghost sets their key on both legs of that exchange: the
+    // question a publisher picked *is* the destination, and there is nothing to bind.
+    //
+    // Site-wide rather than per-tier. Whether to collect an address differs between a print
+    // tier and a digital one, but where it lands cannot, or two tiers would write the same
+    // real address into two different fields and the fulfilment export would only ever see
+    // half of them.
+    // What a tier's checkout page asks, over and above the payment itself.
+    //
+    // Two tables rather than one, because the two lists are not one list: a processor
+    // renders its own collection (an address block) separately from the questions it is
+    // given, only the questions are ordered and capped, and only the questions reference a
+    // field. Merging them would need a nullable column on each row for whichever half it
+    // was not.
+    //
+    // Neither is a binding. A question's answer comes back under the key Ghost sent, so the
+    // field a publisher picked is already the destination; the collected data comes back
+    // under the processor's own vocabulary, and where *that* lands is a site-wide binding.
+    products_checkout_fields: {
+        id: {type: 'string', maxlength: 24, nullable: false, primary: true},
+        product_id: {type: 'string', maxlength: 24, nullable: false, references: 'products.id', cascadeDelete: true},
+        // Deleting a field takes the question with it. Archiving does not: the row stays
+        // and stops being asked, so restoring the field restores the question.
+        custom_field_key: {type: 'string', maxlength: 191, nullable: false, references: 'members_custom_fields.key', cascadeDelete: true},
+        // The order the questions are asked in, stated across every row of a tier whenever
+        // the list is set. Only the relative order carries meaning.
+        sort_order: {type: 'integer', nullable: false, unsigned: true, defaultTo: 0},
+        // What the question is called on the payment page, where the field's own name will
+        // not do: processors cap a label far shorter than a field name may be, and the
+        // wording that works in a settings list is rarely the wording that works mid-payment.
+        // Null asks under the field's name.
+        label: {type: 'string', maxlength: 191, nullable: true},
+        // Defaulted to optional, because a required question at the payment step costs
+        // conversion and a publisher should have to choose that.
+        optional: {type: 'boolean', nullable: false, defaultTo: true},
+        created_at: {type: 'dateTime', nullable: false},
+        updated_at: {type: 'dateTime', nullable: true},
+        '@@UNIQUE_CONSTRAINTS@@': [
+            {columns: ['product_id', 'custom_field_key'], indexName: 'products_checkout_fields_unique'}
+        ],
+        // The unique constraint above answers every lookup that starts from a tier, being
+        // the leftmost column of it. Nothing answers the other direction, and "what asks for
+        // this field" is a question the definitions list has to answer for every field it
+        // returns. Both columns, in that order, so that read is answered from the index
+        // without touching a row: it needs the tier's id and nothing else.
+        '@@INDEXES@@': [
+            ['custom_field_key', 'product_id']
+        ]
+    },
+    // What a tier's checkout collects for itself, over and above the questions it asks.
+    //
+    // One row per tier, one column group per kind of thing, because the set of collectable
+    // things is closed: a publisher invents custom fields, but only Ghost adds the ability
+    // to collect an address, and that arrives with the code that knows how to. A row per
+    // kind would make this table generic enough to hold options meaning nothing on most of
+    // its rows — a country list on a phone number — and no constraint could say otherwise.
+    // Named columns cannot express that state at all, at the cost of a migration per new
+    // kind, which is a release event rather than a runtime one.
+    //
+    // Whether to collect is per tier — a print tier needs a delivery address and a digital
+    // one does not — while where the value lands is site-wide, in the bindings table. A
+    // tier collecting something whose port has nothing bound collects nothing: the binding
+    // is what gives it somewhere to go.
+    products_checkout_config: {
+        id: {type: 'string', maxlength: 24, nullable: false, primary: true},
+        // Unique: this row is the tier's configuration, not one of several.
+        product_id: {
+            type: 'string',
+            maxlength: 24,
+            nullable: false,
+            unique: true,
+            references: 'products.id',
+            cascadeDelete: true
+        },
+        shipping_address_collect: {type: 'boolean', nullable: false, defaultTo: false},
+        // Where a publisher will deliver, as ISO 3166-1 alpha-2 codes, comma-joined.
+        //
+        // Under the address rather than beside it, so the one kind of thing it qualifies is
+        // the only one that can carry it. A processor has to be told, because an address
+        // form cannot be rendered without a country list, and Ghost deliberately holds no
+        // list of its own — which countries exist is contested, and a wrong code fails the
+        // session create, which fails the checkout.
+        shipping_address_allowed_countries: {type: 'string', maxlength: 2000, nullable: true},
+        tax_number_collect: {type: 'boolean', nullable: false, defaultTo: false},
+        phone_collect: {type: 'boolean', nullable: false, defaultTo: false},
+        created_at: {type: 'dateTime', nullable: false},
+        updated_at: {type: 'dateTime', nullable: true}
+    },
+    members_custom_field_bindings: {
+        id: {type: 'string', maxlength: 24, nullable: false, primary: true},
+        // Which kind of collected thing this is: a delivery address, a tax number, a phone
+        // number. Ghost's word rather than a processor's, because a publisher chooses what
+        // to collect and never which processor renders it.
+        //
+        // Deliberately not constrained to a list here: the ports a build knows about are
+        // declared by its sources and registered at boot, and a row naming one this build
+        // has never heard of is ignored rather than refused.
+        //
+        // Unique on its own: one destination per kind of thing, however many processors
+        // could supply it, because a site has one delivery address field.
+        port: {type: 'string', maxlength: 50, nullable: false, unique: true},
+        // Unique, so no two ports write into one field: a field fed by two sources is a
+        // field whose value depends on whichever arrived last. Cascades, so deleting a
+        // field takes its binding with it — an unbinding nobody has to remember to do.
+        custom_field_key: {
+            type: 'string',
+            maxlength: 191,
+            nullable: false,
+            unique: true,
+            references: 'members_custom_fields.key',
+            cascadeDelete: true
+        },
+        // A row exists only while a port is bound; unbinding deletes it, so "no row" is the
+        // whole of what unbound means.
+        created_at: {type: 'dateTime', nullable: false},
+        updated_at: {type: 'dateTime', nullable: true}
+    },
     members_custom_field_values: {
         id: {type: 'string', maxlength: 24, nullable: false, primary: true},
         // The field's stable key, not its id: a value is addressed by key everywhere it
@@ -705,6 +826,25 @@ module.exports = {
         // column a fresh install bounds at 65,535 bytes. The bound matching long_text's
         // exactly is worth more than the schema restating what the write path enforces.
         value_text: {type: 'text', maxlength: 65535, nullable: true},
+        // How this value arrived: typed through the Admin API, read out of an imported
+        // CSV, or collected by Stripe at checkout. Recorded per leaf at the moment of the
+        // write, because it cannot be reconstructed afterwards, and re-stamped on every
+        // write, so it names where the value currently held came from rather than where
+        // the first one did.
+        //
+        // The path a value took, not the person who operated it: who edited a member's
+        // fields is already recorded as an action. Nullable because rows written before
+        // this column existed have a source nobody can recover, and a default would
+        // assert one. Keep in sync with the write path's own source enum.
+        // Keep in sync with the write path's own source enum. Documented here rather than
+        // enforced, the way this table's sibling documents its field types: nothing writes
+        // these rows through a model, so the write path is what holds the rule.
+        source: {
+            type: 'string',
+            maxlength: 50,
+            nullable: true,
+            validations: {isIn: [['admin', 'import', 'stripe']]}
+        },
         created_at: {type: 'dateTime', nullable: false},
         updated_at: {type: 'dateTime', nullable: true},
         // Named, because the name knex derives from the table and all three columns

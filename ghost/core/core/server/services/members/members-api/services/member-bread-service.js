@@ -612,7 +612,9 @@ module.exports = class MemberBREADService {
         }
 
         if (plannedCustomFields) {
-            await this.customFieldValues.applyWrite(model.id, plannedCustomFields);
+            // Every value reaching here was typed into the Admin API, whether by a person
+            // in admin or by an integration. Which of the two is the action log's business.
+            await this.customFieldValues.applyWrite(model.id, plannedCustomFields, {source: 'admin'});
 
             // Custom fields aren't a member column or relation, so an edit touching
             // only them leaves `model._changed` empty and the save fires nothing.

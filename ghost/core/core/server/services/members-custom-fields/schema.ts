@@ -27,6 +27,18 @@ type CustomFieldRank = {sort_order: number};
 
 type CustomFieldRow = z.infer<typeof DbCustomField> & CustomFieldRank;
 
+/**
+ * How a value arrived. The path it took, not the person who took it: who edited a
+ * member's fields is already recorded as an action, and Stripe is not a person at all.
+ *
+ * Stated once here and required by every write, so a new writer has to name itself rather
+ * than inheriting someone else's identity. Mirrors schema.js's `isIn` on the column, which
+ * is static config and cannot import this.
+ */
+export const VALUE_SOURCE = {admin: 'admin', import: 'import', stripe: 'stripe'} as const;
+export type ValueSource = typeof VALUE_SOURCE[keyof typeof VALUE_SOURCE];
+export const ValueSourceSchema = z.enum([VALUE_SOURCE.admin, VALUE_SOURCE.import, VALUE_SOURCE.stripe]);
+
 // One part of a member's value. What a `path` means is storage.ts's business, so the row
 // carries it as a plain string.
 export const DbCustomFieldValue = z.object({
@@ -37,6 +49,8 @@ export const DbCustomFieldValue = z.object({
     // Nullable like the column, though nothing here writes a null: a part with no value
     // has no row.
     value_text: z.string().nullable(),
+    // Nullable only for rows written before the column existed; every write states one.
+    source: ValueSourceSchema.nullable(),
     created_at: DbDate,
     updated_at: DbDate.nullable()
 });
@@ -56,6 +70,24 @@ export const DbCustomFieldLeaf = z.object({
     value_text: z.string()
 });
 
+/**
+ * Where one source's port writes. A row exists only while the port is bound, so "no row"
+ * is the whole of what unbound means.
+ *
+ * `port` stays a plain string: which ports exist is declared by the sources that supply
+ * them and registered at boot, so a row naming one this build has never heard of is a row
+ * to ignore rather than one to refuse.
+ */
+export const DbCustomFieldBinding = z.object({
+    id: z.string(),
+    port: z.string(),
+    custom_field_key: z.string(),
+    created_at: DbDate,
+    updated_at: DbDate.nullable()
+});
+
+type CustomFieldBindingRow = z.infer<typeof DbCustomFieldBinding>;
+
 declare module 'knex/types/tables' {
     interface Tables {
         members_custom_fields: Knex.CompositeTableType<
@@ -69,6 +101,13 @@ declare module 'knex/types/tables' {
             CustomFieldValueRow,
             Omit<z.input<typeof DbCustomFieldValue>, 'updated_at'>,
             Partial<CustomFieldValueRow>
+        >;
+        members_custom_field_bindings: Knex.CompositeTableType<
+            CustomFieldBindingRow,
+            // `updated_at` is set on insert as well as update: a binding is a setting, and
+            // "when was this last stated" is the same question whichever way it got there.
+            z.input<typeof DbCustomFieldBinding>,
+            Partial<CustomFieldBindingRow>
         >;
     }
 }

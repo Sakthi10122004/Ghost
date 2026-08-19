@@ -413,6 +413,51 @@ describe('Member Custom Fields Admin API', function () {
         });
     });
 
+    // `include` is renamed to `withRelated` by the API framework and forwarded to the
+    // service like `filter` is. Nothing here is a Bookshelf relation — this is the first
+    // resource in Ghost to serve one with no model behind it — so the contract is only what
+    // these assert: a relation is loaded when asked for, absent when not, and a name this
+    // build does not serve is not an error.
+    describe('Asking for relations', function () {
+        it('leaves a relation nobody asked for absent', async function () {
+            await createField({name: 'T-shirt size'});
+
+            const {body} = await agent.get('members/custom_fields/').expectStatus(200);
+
+            // Absent rather than empty, so a caller can tell "not requested" from "none".
+            assert.equal('bindings' in body.members_custom_fields[0], false);
+        });
+
+        it('loads a relation on a browse and on a read alike', async function () {
+            const field = await createField({name: 'T-shirt size'});
+
+            const {body: browsed} = await agent.get('members/custom_fields/?include=bindings').expectStatus(200);
+            const {body: read} = await agent.get(`members/custom_fields/${field.key}/?include=bindings`).expectStatus(200);
+
+            assert.deepEqual(browsed.members_custom_fields[0].bindings, []);
+            assert.deepEqual(read.members_custom_fields[0].bindings, []);
+        });
+
+        it('loads one relation without loading the other', async function () {
+            await createField({name: 'T-shirt size'});
+
+            const {body} = await agent.get('members/custom_fields/?include=tiers').expectStatus(200);
+
+            assert.deepEqual(body.members_custom_fields[0].tiers, []);
+            assert.equal('bindings' in body.members_custom_fields[0], false);
+        });
+
+        // An admin build newer than its Ghost asks for relations this Ghost has never heard
+        // of. That is a relation it does not get, not a request it got wrong.
+        it('ignores a relation this build does not serve', async function () {
+            await createField({name: 'T-shirt size'});
+
+            const {body} = await agent.get('members/custom_fields/?include=inside_leg').expectStatus(200);
+
+            assert.equal('inside_leg' in body.members_custom_fields[0], false);
+        });
+    });
+
     describe('Creating several definitions at once', function () {
         it('creates every definition in the request, in order', async function () {
             const {body} = await agent
@@ -1346,6 +1391,31 @@ describe('Member Custom Fields Admin API', function () {
             // value is still attached to it (restoring the field brings it back).
             const rows = await models.Base.knex('members_custom_field_values').where('member_id', memberId);
             assert.equal(rows.length, 1);
+        });
+
+        // The record has to be made at the moment of the write; nothing can reconstruct it
+        // later. What reads it is a separate question — this pins only that it is written,
+        // and that it names where the value currently held came from rather than the first.
+        it('records that the Admin API wrote each value, and re-records it on every write', async function () {
+            const field = await createField({name: 'Shipping address', type: 'address'});
+            const memberId = await createMember();
+            await setValues(memberId, {[field.key]: {line1: '1 High Street', city: 'London'}});
+
+            const sourceOf = async () => models.Base.knex('members_custom_field_values')
+                .where('member_id', memberId)
+                .orderBy('path')
+                .select('path', 'source');
+
+            assert.deepEqual(await sourceOf(), [
+                {path: 'city', source: 'admin'},
+                {path: 'line1', source: 'admin'}
+            ]);
+
+            await setValues(memberId, {[field.key]: {city: 'Bristol'}});
+            assert.deepEqual(await sourceOf(), [
+                {path: 'city', source: 'admin'},
+                {path: 'line1', source: 'admin'}
+            ], 'a re-write keeps naming the path that wrote it');
         });
 
         it('drops a field\'s values when the field is permanently deleted', async function () {

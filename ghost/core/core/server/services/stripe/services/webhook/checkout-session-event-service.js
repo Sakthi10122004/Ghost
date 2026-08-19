@@ -358,6 +358,11 @@ module.exports = class CheckoutSessionEventService {
             }
         }
 
+        // After the subscription work, and deliberately not part of it: a value the member
+        // gave us for free must never be able to fail the webhook. A throw here would make
+        // Stripe retry the event and risk doing the payment work twice.
+        await this.writeCollectedFields(member.id, session);
+
         if (checkoutType !== 'upgrade') {
             const ghostSignupContext = /** @type {SignupContext | undefined} */ (session.metadata?.ghostSignupContext);
             const shouldSkipSignupEmailWhenWelcomeEmailActive = canWelcomeEmailReplaceSignupPaidEmail(ghostSignupContext);
@@ -371,6 +376,38 @@ module.exports = class CheckoutSessionEventService {
                 // Direct checkout flows do not have a pre-checkout sign-in path.
                 this.deps.sendSignupEmail(customer.email);
             }
+        }
+    }
+
+    /**
+     * Save what Stripe collected on the checkout page into the member's custom fields.
+     *
+     * The custom fields services are required here rather than injected because boot builds
+     * them before the Stripe service and there is exactly one of each; the same reason the
+     * donation handler above requires its event type inline.
+     *
+     * @param {string} memberId
+     * @param {import('stripe').Stripe.Checkout.Session} session
+     */
+    async writeCollectedFields(memberId, session) {
+        try {
+            const labs = require('../../../../../shared/labs');
+            if (!labs.isSet('membersCustomFields')) {
+                return;
+            }
+
+            const customFields = require('../../../members-custom-fields');
+            const {writeCollectedFields} = require('../checkout/collected-fields');
+
+            await writeCollectedFields(memberId, session, {
+                activeFieldKeys: async () => new Set((await customFields.definitions.browse()).map(field => field.key)),
+                resolvePort: port => customFields.bindings.resolve(port),
+                planWrite: values => customFields.values.planWrite(values),
+                // Stripe filled these in, whatever a person did with them afterwards.
+                applyWrite: (id, plan) => customFields.values.applyWrite(id, plan, {source: 'stripe'})
+            });
+        } catch (err) {
+            logging.error(err);
         }
     }
 };
