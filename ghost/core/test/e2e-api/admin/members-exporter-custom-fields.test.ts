@@ -19,7 +19,7 @@ const CORE_COLUMNS = [
     'gift_id'
 ];
 
-const ADDRESS_SUB_FIELDS = ['line1', 'line2', 'city', 'state', 'postal_code', 'country'];
+const ADDRESS_SUB_FIELDS = ['name', 'line1', 'line2', 'city', 'state', 'postal_code', 'country'];
 
 /** Custom field columns are namespaced so a minted key can never take a core column. */
 function columnFor(key: string, subField?: string) {
@@ -31,6 +31,8 @@ function addressColumnsFor(key: string) {
 }
 
 const FULL_ADDRESS = {
+    // Not the account name, which is the case the part exists for.
+    name: 'Bex Jones, c/o Acme Ltd',
     line1: '1 High Street',
     line2: 'Flat 2',
     city: 'London',

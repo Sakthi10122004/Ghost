@@ -15,7 +15,7 @@ describe('custom-field-types catalog', function () {
         assert.deepEqual(parts, {
             short_text: null,
             long_text: null,
-            address: ['line1', 'line2', 'city', 'state', 'postal_code', 'country']
+            address: ['name', 'line1', 'line2', 'city', 'state', 'postal_code', 'country']
         });
     });
 
@@ -86,6 +86,13 @@ describe('custom-field-types catalog', function () {
             // townland address; both would have failed the old required set.
             assert.equal(parse({line1: 'Flat 3, 8 Wan Chai Road', city: 'Hong Kong', country: 'HK'}), true);
             assert.equal(parse({line1: 'Cloonlara', state: 'Co. Clare', country: 'IE'}), true);
+        });
+
+        // The recipient is a part like any other: a parcel needs a name on it, and that
+        // name is often not the account name.
+        it('accepts a recipient name, alone or beside the postal parts', function () {
+            assert.equal(parse({name: 'Bex Jones'}), true);
+            assert.equal(parse({name: 'Bex Jones, c/o Acme Ltd', line1: '1 High Street', country: 'GB'}), true);
         });
 
         it('rejects an address that names nothing', function () {

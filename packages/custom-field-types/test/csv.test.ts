@@ -12,6 +12,7 @@ describe('custom field CSV cells', function () {
     const address = {key: 'shipping_address', type: 'address'} as const;
 
     const ADDRESS_COLUMNS = [
+        'custom_fields.shipping_address.name',
         'custom_fields.shipping_address.line1',
         'custom_fields.shipping_address.line2',
         'custom_fields.shipping_address.city',
@@ -88,6 +89,7 @@ describe('custom field CSV columns', function () {
 
     it('gives a composite field one column per sub-field, each naming the part it holds', function () {
         assert.deepEqual(csvColumnsForField({key: 'shipping_address', type: 'address'}), [
+            {column: 'custom_fields.shipping_address.name', subField: 'name'},
             {column: 'custom_fields.shipping_address.line1', subField: 'line1'},
             {column: 'custom_fields.shipping_address.line2', subField: 'line2'},
             {column: 'custom_fields.shipping_address.city', subField: 'city'},
@@ -135,6 +137,7 @@ describe('reading custom field values from a CSV row', function () {
     // The export writes "no address" and an all-blank address identically, so all-blank is read as absent.
     it('omits a composite whose every sub-cell is blank', function () {
         assert.deepEqual(fieldValuesFromCsvRow([address], {
+            'custom_fields.shipping_address.name': '',
             'custom_fields.shipping_address.line1': '',
             'custom_fields.shipping_address.line2': '',
             'custom_fields.shipping_address.city': '',
