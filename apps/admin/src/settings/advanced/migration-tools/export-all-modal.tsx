@@ -12,6 +12,8 @@ import {
 } from '@tryghost/shade/components';
 import {LucideIcon} from '@tryghost/shade/utils';
 import {useCurrentUser} from '@tryghost/admin-x-framework/api/current-user';
+import {useHandleError} from '@tryghost/admin-x-framework/hooks';
+import {useRequestExport} from '@tryghost/admin-x-framework/api/exports';
 
 export type ExportMode = 'sync' | 'async';
 
@@ -38,6 +40,8 @@ type ExportPhase = 'select' | 'confirmed' | 'preparing' | 'done';
 
 const ExportAllModal: React.FC<{open: boolean; onOpenChange: (open: boolean) => void; mode: ExportMode}> = ({open, onOpenChange, mode}) => {
     const {data: currentUser} = useCurrentUser();
+    const {mutateAsync: requestExport, isPending: isRequestingExport} = useRequestExport();
+    const handleError = useHandleError();
     const [phase, setPhase] = useState<ExportPhase>('select');
     const [selected, setSelected] = useState<Record<ExportComponentKey, boolean>>(() => {
         const initial = {} as Record<ExportComponentKey, boolean>;
@@ -54,6 +58,11 @@ const ExportAllModal: React.FC<{open: boolean; onOpenChange: (open: boolean) => 
     const noneSelected = visibleComponents.every(component => !selected[component.key]);
 
     const handleOpenChange = (next: boolean) => {
+        // The export request is not idempotent: closing mid-flight would
+        // detach the pending promise and let it flip a later session's phase.
+        if (!next && isRequestingExport) {
+            return;
+        }
         onOpenChange(next);
         if (next) {
             clearTimeout(resetTimerRef.current);
@@ -66,12 +75,19 @@ const ExportAllModal: React.FC<{open: boolean; onOpenChange: (open: boolean) => 
         resetTimerRef.current = setTimeout(() => setPhase('select'), 200);
     };
 
-    // Static UX/UI mockup, nothing is wired to a backend
-    const startExport = () => {
+    const startExport = async () => {
         if (mode === 'async') {
-            setPhase('confirmed');
+            try {
+                const components = Object.fromEntries(visibleComponents.map(component => [component.key, selected[component.key]]));
+                await requestExport({components});
+                setPhase('confirmed');
+            } catch (e) {
+                // An older backend without the endpoint 404s into the same path
+                handleError(e);
+            }
             return;
         }
+        // Sync mode is still a static UX/UI mockup — wired separately
         setPhase('preparing');
         mockTimerRef.current = setTimeout(() => {
             triggerMockDownload();
@@ -141,8 +157,8 @@ const ExportAllModal: React.FC<{open: boolean; onOpenChange: (open: boolean) => 
                             ))}
                         </div>
                         <DialogFooter className='gap-2 sm:justify-end'>
-                            <Button variant='outline' onClick={() => handleOpenChange(false)}>Cancel</Button>
-                            <Button disabled={noneSelected} onClick={startExport}>
+                            <Button disabled={isRequestingExport} variant='outline' onClick={() => handleOpenChange(false)}>Cancel</Button>
+                            <Button disabled={noneSelected || isRequestingExport} onClick={() => void startExport()}>
                                 <LucideIcon.Download /> Export
                             </Button>
                         </DialogFooter>

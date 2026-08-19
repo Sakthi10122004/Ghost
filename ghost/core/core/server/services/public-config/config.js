@@ -1,4 +1,4 @@
-const {isPlainObject} = require('lodash');
+const {isPlainObject, omit} = require('lodash');
 const config = require('../../../shared/config');
 const settingsCache = require('../../../shared/settings-cache');
 const labs = require('../../../shared/labs');
@@ -17,6 +17,17 @@ const tinybirdLocalStatsPayloadProperties = [
     'endpoint',
     'datasource'
 ];
+
+// hostSettings is served wholesale to every staff session, so secrets must
+// never ride along: the export webhook signing key would let any staff role
+// forge signed archive requests directly to the host.
+const sanitizeHostSettings = (hostSettings) => {
+    if (!isPlainObject(hostSettings) || !isPlainObject(hostSettings.export)) {
+        return hostSettings;
+    }
+
+    return {...hostSettings, export: omit(hostSettings.export, 'webhookSecret')};
+};
 
 const copyPayloadProperties = (target, source, properties) => {
     for (const property of properties) {
@@ -58,7 +69,7 @@ module.exports = function getConfigProperties() {
         stripeDirect: config.get('stripeDirect'),
         mailgunIsConfigured: !!(config.get('bulkEmail') && config.get('bulkEmail').mailgun),
         emailAnalytics: config.get('emailAnalytics:enabled'),
-        hostSettings: config.get('hostSettings'),
+        hostSettings: sanitizeHostSettings(config.get('hostSettings')),
         klipy: config.get('klipy'),
         pintura: config.get('pintura'),
         signupForm: config.get('signupForm'),

@@ -289,6 +289,11 @@ module.exports = function apiRoutes() {
         http(api.db.inlineMedia)
     );
 
+    // ## Exports
+    // NOTE: deliberately absent from the integration-token allowlist in
+    // admin/middleware.js — staff sessions only.
+    router.post('/exports', mw.authAdminApi, http(api.exports.add));
+
     // ## Slack
     router.post('/slack/test', mw.authAdminApi, http(api.slack.sendTest));
 
