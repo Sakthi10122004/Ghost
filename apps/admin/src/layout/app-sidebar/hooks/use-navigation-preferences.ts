@@ -1,5 +1,6 @@
-import { DEFAULT_NAVIGATION_PREFERENCES, useEditUserPreferences, useUserPreferences, type NavigationPreferences } from "@/hooks/user-preferences";
+import { useEditUserPreferences, useUserPreferences, type NavigationPreferences } from "@/hooks/user-preferences";
 import { useMutation, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query";
+import type { DeepPartial } from "@/utils/deep-merge";
 
 
 export const useNavigationPreferences = (): UseQueryResult<NavigationPreferences> => {
@@ -8,11 +9,11 @@ export const useNavigationPreferences = (): UseQueryResult<NavigationPreferences
     });
 };
 
-export const useEditNavigationPreferences = (): UseMutationResult<void, Error, Partial<NavigationPreferences>, unknown> => {
+export const useEditNavigationPreferences = (): UseMutationResult<void, Error, DeepPartial<NavigationPreferences>, unknown> => {
     const { mutateAsync: editPreferences } = useEditUserPreferences();
 
     return useMutation({
-        mutationFn: async (updatedNavigationPreferences: Partial<NavigationPreferences>) => {
+        mutationFn: async (updatedNavigationPreferences: DeepPartial<NavigationPreferences>) => {
             await editPreferences({
                 navigation: updatedNavigationPreferences,
             });
@@ -27,11 +28,11 @@ export const useNavigationExpanded = (expandedKey: keyof NavigationPreferences['
     const expanded = navigationPreferences?.expanded[expandedKey];
 
     const setExpanded = async (value: boolean) => {
+        // Send the one key that changed. Spreading this tab's other keys into
+        // the payload would carry their stale values over whatever another
+        // writer stored, which the merge underneath cannot undo.
         return editNavigationPreferences({
-            expanded: {
-                ...(navigationPreferences?.expanded ?? DEFAULT_NAVIGATION_PREFERENCES.expanded),
-                [expandedKey]: value
-            },
+            expanded: { [expandedKey]: value },
         });
     };
 
