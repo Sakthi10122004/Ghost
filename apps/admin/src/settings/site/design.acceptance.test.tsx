@@ -72,9 +72,10 @@ describe("Design settings", () => {
         await renderAdminApp("/settings/design/edit");
 
         const modal = settingsScreen.designModal();
+        // Both previews are fetched up front, before either tab is selected.
         await expect(homepagePreview).toHaveRequestedPreview({ custom: "{}" });
-        await modal.getByTestId(sel.designToolbar).getByRole("tab", { name: "Post" }).click();
         await expect(postPreview!).toHaveRequestedPreview({ custom: "{}" });
+        await modal.getByTestId(sel.designToolbar).getByRole("tab", { name: "Post" }).click();
 
         await modal.getByRole("radio", { name: "Mobile" }).click();
         await expect.element(modal.getByTestId(sel.previewMobile)).toBeVisible();
